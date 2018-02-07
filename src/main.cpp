@@ -205,7 +205,7 @@ int main() {
     int lane = 1;
 
     // Set a reference velocity to go as close as possible to the speed limit.
-    double ref_vel = 49.5;
+    double ref_vel = 0.0;
 
     h.onMessage([&ref_vel, &lane, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy]
         (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
@@ -251,13 +251,12 @@ int main() {
                         // BEGIN
                         int prev_size = previous_path_x.size();
 
-                        // Prediction: decide to switch lane
-
                         // Preventing collisions.
                         if (prev_size > 0) {
                             car_s = end_path_s;
                         }
 
+                        // Prediction: decide to switch lane
                         bool too_close = false;
 
                         for ( int i = 0; i < sensor_fusion.size(); i++ ) {
@@ -272,9 +271,17 @@ int main() {
                                 check_car_s += prev_size * 0.02 * check_speed;
 
                                 if ( check_car_s > car_s && (check_car_s - car_s) < 30 ) {
-                                    ref_vel = 29.5;
+                                    // Prevent jerking on acceleration / braking
+                                    too_close = true;
                                 }
                             }
+                        }
+
+                        // If we are too close to the vehicle in fron of us slow down (by 5 mps^2)
+                        if ( too_close ) {
+                            ref_vel -= 0.224;
+                        } else if ( ref_vel < 49.5 ) {
+                            ref_vel += 0.224;
                         }
 
                         vector<double> ptsx;
