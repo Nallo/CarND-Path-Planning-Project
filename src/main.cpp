@@ -273,6 +273,10 @@ int main() {
                                 if ( check_car_s > car_s && (check_car_s - car_s) < 30 ) {
                                     // Prevent jerking on acceleration / braking
                                     too_close = true;
+
+                                    if ( lane > 0 ) {
+                                        lane = 0;
+                                    }
                                 }
                             }
                         }
