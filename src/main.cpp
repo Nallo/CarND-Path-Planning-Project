@@ -10,6 +10,16 @@
 #include "json.hpp"
 #include "spline.h"
 
+#define LANE_INVALID -1
+#define LANE_LEFT    0
+#define LANE_CENTER  1
+#define LANE_RIGHT   2
+
+#define SAFE_ZONE 30
+
+#define SPEED_INVALID -1.0
+#define SPEED_MAX     49.50
+
 using namespace std;
 
 // for convenience
@@ -247,8 +257,7 @@ int main() {
 
                         json msgJson;
 
-                        // TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
-                        // BEGIN
+                        // Define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
                         int prev_size = previous_path_x.size();
 
                         // Preventing collisions.
@@ -257,36 +266,77 @@ int main() {
                         }
 
                         // Prediction: decide to switch lane
-                        bool too_close = false;
+                        bool car_ahead = false;
+                        bool car_right = false;
+                        bool car_left = false;
+                        double other_car_speed = SPEED_INVALID;
 
                         for ( int i = 0; i < sensor_fusion.size(); i++ ) {
-                            float d = sensor_fusion[i][6];
+                            float check_car_d = sensor_fusion[i][6];
 
-                            if ( d < (2 + 4*lane + 2) && d > (2 + 4*lane - 2) ) {
-                                double vx = sensor_fusion[i][3];
-                                double vy = sensor_fusion[i][4];
-                                double check_speed = sqrt(vx*vx + vy*vy);
-                                double check_car_s = sensor_fusion[i][5];
+                            // Determine the other car's lane
+                            int other_car_lane = LANE_INVALID;
+                            if ( check_car_d > 0 && check_car_d < 4 ) {
+                                other_car_lane = LANE_LEFT;
+                            } else if ( check_car_d > 4 && check_car_d < 8 ) {
+                                other_car_lane = LANE_CENTER;
+                            } else if ( check_car_d > 8 && check_car_d < 12 ) {
+                                other_car_lane = LANE_RIGHT;
+                            }
 
-                                check_car_s += prev_size * 0.02 * check_speed;
+                            // Skip if the other car is on the other side of the road
+                            if ( other_car_lane == LANE_INVALID ) {
+                                continue;
+                            }
 
-                                if ( check_car_s > car_s && (check_car_s - car_s) < 30 ) {
-                                    // Prevent jerking on acceleration / braking
-                                    too_close = true;
+                            double vx = sensor_fusion[i][3];
+                            double vy = sensor_fusion[i][4];
+                            double check_speed = sqrt(vx*vx + vy*vy);
+                            double check_car_s = sensor_fusion[i][5];
 
-                                    if ( lane > 0 ) {
-                                        lane = 0;
-                                    }
-                                }
+                            // Project the other car's position in the short future
+                            check_car_s += prev_size * 0.02 * check_speed;
+
+                            if ( other_car_lane == lane ) {
+                                // Car in our same lane
+                                other_car_speed = check_speed;
+                                car_ahead |= (check_car_s > car_s && (check_car_s - car_s) < SAFE_ZONE);
+                            } else if ( lane - other_car_lane == 1 ) {
+                                // Car on the left lane
+                                car_left |= ((car_s - SAFE_ZONE) < check_car_s && (car_s + SAFE_ZONE) > check_car_s);
+                            } else if ( lane - other_car_lane == -1 ) {
+                                // Car on the right lane
+                                car_right |= ((car_s - SAFE_ZONE) < check_car_s && (car_s + SAFE_ZONE) > check_car_s);
                             }
                         }
+                        cout << "Car Left:  " << car_left  << '\n';
+                        cout << "Car Haead: " << car_ahead << '\n';
+                        cout << "Car Right: " << car_right << '\n';
 
-                        // If we are too close to the vehicle in fron of us slow down (by 5 mps^2)
-                        if ( too_close ) {
-                            ref_vel -= 0.224;
-                        } else if ( ref_vel < 49.5 ) {
-                            ref_vel += 0.224;
+                        // If there is a car ahead...
+                        if ( car_ahead ) {
+                            if ( !car_left && lane > LANE_LEFT ) {
+                                // Go to left lane if no cars is there...
+                                cout << "Changing lane to <--" << '\n';
+                                lane--;
+                            } else if ( !car_right && lane < LANE_RIGHT ) {
+                                // Otherwise go to right lane if no cars is there...
+                                cout << "Changing lane to -->" << '\n';
+                                lane++;
+                            } else {
+                                // Otherwise slow down...
+                                if ( ref_vel > other_car_speed ) {
+                                    cout << "Breaking" << '\n';
+                                    ref_vel -= (0.7 * 0.224);
+                                }
+                            }
+                        } else {
+                            if ( ref_vel < SPEED_MAX ) {
+                                cout << "Accelerating" << '\n';
+                                ref_vel += 0.224;
+                            }
                         }
+                        cout << '\n';
 
                         vector<double> ptsx;
                         vector<double> ptsy;
@@ -383,7 +433,6 @@ int main() {
                             next_x_vals.push_back(x_point);
                             next_y_vals.push_back(y_point);
                         }
-                        // END
 
                         msgJson["next_x"] = next_x_vals;
                         msgJson["next_y"] = next_y_vals;
